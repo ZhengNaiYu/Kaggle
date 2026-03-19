@@ -1,0 +1,10 @@
+# Directories
+data/
+models/
+
+# File extensions
+*.npy
+*.log
+*.pth
+*.pt
+*.hdf5

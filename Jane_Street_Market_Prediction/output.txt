@@ -1,0 +1,132 @@
+Loading...
+Filling...
+Original shape: (2390491, 138)
+features[1:] shape: (2390491, 129)
+Converting...
+f_mean shape: (129,)
+Finish.
+features shape: (1981287, 130)
+train shape: (1981287, 139)
+Using device: mps
+
+==================================================
+FOLD 0
+==================================================
+FOLD0 EPOCH:  0, train_loss:0.69284, u_score:640.49169, auc:0.53121, logloss:0.69191, time: 0.43min
+Validation score improved (-inf --> 0.5312128388531191). Saving model!
+FOLD0 EPOCH:  1, train_loss:0.69097, u_score:1712.77911, auc:0.53176, logloss:0.69268, time: 0.82min
+Validation score improved (0.5312128388531191 --> 0.5317572777659204). Saving model!
+FOLD0 EPOCH:  2, train_loss:0.69022, u_score:1616.39464, auc:0.53267, logloss:0.69214, time: 1.22min
+Validation score improved (0.5317572777659204 --> 0.5326715521692045). Saving model!
+FOLD0 EPOCH:  3, train_loss:0.68944, u_score:1592.58159, auc:0.53199, logloss:0.69305, time: 1.60min
+EarlyStopping counter: 1 out of 15
+FOLD0 EPOCH:  4, train_loss:0.68872, u_score:1244.69114, auc:0.53150, logloss:0.69309, time: 1.99min
+EarlyStopping counter: 2 out of 15
+FOLD0 EPOCH:  5, train_loss:0.68779, u_score:818.33711, auc:0.53020, logloss:0.69441, time: 2.38min
+EarlyStopping counter: 3 out of 15
+FOLD0 EPOCH:  6, train_loss:0.68686, u_score:1606.86833, auc:0.53248, logloss:0.69303, time: 2.77min
+EarlyStopping counter: 4 out of 15
+FOLD0 EPOCH:  7, train_loss:0.68610, u_score:1440.45218, auc:0.53200, logloss:0.69389, time: 3.17min
+EarlyStopping counter: 5 out of 15
+FOLD0 EPOCH:  8, train_loss:0.68514, u_score:1310.15674, auc:0.53494, logloss:0.69602, time: 3.57min
+Validation score improved (0.5326715521692045 --> 0.5349418381579983). Saving model!
+FOLD0 EPOCH:  9, train_loss:0.68416, u_score:1052.96807, auc:0.53154, logloss:0.69497, time: 3.96min
+EarlyStopping counter: 1 out of 15
+
+==================================================
+FOLD 1
+==================================================
+FOLD1 EPOCH:  0, train_loss:0.69285, u_score:429.86317, auc:0.52679, logloss:0.69288, time: 4.42min
+Validation score improved (-inf --> 0.5267913489028331). Saving model!
+FOLD1 EPOCH:  1, train_loss:0.69073, u_score:432.26078, auc:0.52755, logloss:0.69351, time: 4.81min
+Validation score improved (0.5267913489028331 --> 0.5275499954106332). Saving model!
+FOLD1 EPOCH:  2, train_loss:0.68999, u_score:931.30199, auc:0.53089, logloss:0.69286, time: 5.20min
+Validation score improved (0.5275499954106332 --> 0.5308917464308432). Saving model!
+FOLD1 EPOCH:  3, train_loss:0.68946, u_score:609.04973, auc:0.52714, logloss:0.69296, time: 5.59min
+EarlyStopping counter: 1 out of 15
+FOLD1 EPOCH:  4, train_loss:0.68862, u_score:666.44179, auc:0.52880, logloss:0.69272, time: 5.96min
+EarlyStopping counter: 2 out of 15
+FOLD1 EPOCH:  5, train_loss:0.68779, u_score:1105.83838, auc:0.53092, logloss:0.69348, time: 6.34min
+Validation score improved (0.5308917464308432 --> 0.5309238223718586). Saving model!
+FOLD1 EPOCH:  6, train_loss:0.68695, u_score:1093.91837, auc:0.53232, logloss:0.69331, time: 6.72min
+Validation score improved (0.5309238223718586 --> 0.5323160573975186). Saving model!
+FOLD1 EPOCH:  7, train_loss:0.68590, u_score:1410.61191, auc:0.53342, logloss:0.69344, time: 7.10min
+Validation score improved (0.5323160573975186 --> 0.5334217617928522). Saving model!
+FOLD1 EPOCH:  8, train_loss:0.68497, u_score:1372.60638, auc:0.53317, logloss:0.69460, time: 7.48min
+EarlyStopping counter: 1 out of 15
+FOLD1 EPOCH:  9, train_loss:0.68403, u_score:1187.15885, auc:0.53100, logloss:0.69497, time: 7.87min
+EarlyStopping counter: 2 out of 15
+
+==================================================
+FOLD 2
+==================================================
+FOLD2 EPOCH:  0, train_loss:0.69295, u_score:2625.60578, auc:0.53135, logloss:0.69193, time: 8.33min
+Validation score improved (-inf --> 0.531346116157225). Saving model!
+FOLD2 EPOCH:  1, train_loss:0.69086, u_score:2780.94770, auc:0.53353, logloss:0.69161, time: 8.73min
+Validation score improved (0.531346116157225 --> 0.5335345980256326). Saving model!
+FOLD2 EPOCH:  2, train_loss:0.69000, u_score:3107.75010, auc:0.53206, logloss:0.69223, time: 9.12min
+EarlyStopping counter: 1 out of 15
+FOLD2 EPOCH:  3, train_loss:0.68932, u_score:3354.04713, auc:0.53251, logloss:0.69223, time: 9.51min
+EarlyStopping counter: 2 out of 15
+FOLD2 EPOCH:  4, train_loss:0.68846, u_score:3591.56403, auc:0.53250, logloss:0.69384, time: 9.90min
+EarlyStopping counter: 3 out of 15
+FOLD2 EPOCH:  5, train_loss:0.68752, u_score:2563.50207, auc:0.53269, logloss:0.69283, time: 10.30min
+EarlyStopping counter: 4 out of 15
+FOLD2 EPOCH:  6, train_loss:0.68648, u_score:2050.62116, auc:0.52975, logloss:0.69362, time: 10.70min
+EarlyStopping counter: 5 out of 15
+FOLD2 EPOCH:  7, train_loss:0.68547, u_score:2030.70248, auc:0.52903, logloss:0.69556, time: 11.08min
+EarlyStopping counter: 6 out of 15
+FOLD2 EPOCH:  8, train_loss:0.68451, u_score:2215.97670, auc:0.52827, logloss:0.69452, time: 11.47min
+EarlyStopping counter: 7 out of 15
+FOLD2 EPOCH:  9, train_loss:0.68348, u_score:1429.62545, auc:0.52590, logloss:0.69611, time: 11.86min
+EarlyStopping counter: 8 out of 15
+
+==================================================
+FOLD 3
+==================================================
+FOLD3 EPOCH:  0, train_loss:0.69311, u_score:128.53468, auc:0.52397, logloss:0.69250, time: 12.33min
+Validation score improved (-inf --> 0.523967574094768). Saving model!
+FOLD3 EPOCH:  1, train_loss:0.69062, u_score:167.48402, auc:0.52145, logloss:0.69331, time: 12.72min
+EarlyStopping counter: 1 out of 15
+FOLD3 EPOCH:  2, train_loss:0.68980, u_score:282.01340, auc:0.52577, logloss:0.69278, time: 13.11min
+Validation score improved (0.523967574094768 --> 0.5257704670691911). Saving model!
+FOLD3 EPOCH:  3, train_loss:0.68906, u_score:489.12579, auc:0.52454, logloss:0.69337, time: 13.49min
+EarlyStopping counter: 1 out of 15
+FOLD3 EPOCH:  4, train_loss:0.68808, u_score:489.42882, auc:0.52557, logloss:0.69372, time: 13.86min
+EarlyStopping counter: 2 out of 15
+FOLD3 EPOCH:  5, train_loss:0.68727, u_score:312.28577, auc:0.52354, logloss:0.69493, time: 14.26min
+EarlyStopping counter: 3 out of 15
+FOLD3 EPOCH:  6, train_loss:0.68627, u_score:528.18119, auc:0.52241, logloss:0.69419, time: 14.65min
+EarlyStopping counter: 4 out of 15
+FOLD3 EPOCH:  7, train_loss:0.68544, u_score:278.43990, auc:0.52327, logloss:0.69546, time: 15.03min
+EarlyStopping counter: 5 out of 15
+FOLD3 EPOCH:  8, train_loss:0.68429, u_score:660.29129, auc:0.52298, logloss:0.69603, time: 15.41min
+EarlyStopping counter: 6 out of 15
+FOLD3 EPOCH:  9, train_loss:0.68330, u_score:486.12514, auc:0.52008, logloss:0.69727, time: 15.79min
+EarlyStopping counter: 7 out of 15
+
+==================================================
+FOLD 4
+==================================================
+FOLD4 EPOCH:  0, train_loss:0.69305, u_score:1703.20910, auc:0.53206, logloss:0.69143, time: 16.26min
+Validation score improved (-inf --> 0.5320570997103471). Saving model!
+FOLD4 EPOCH:  1, train_loss:0.69077, u_score:1396.45232, auc:0.52607, logloss:0.69263, time: 16.65min
+EarlyStopping counter: 1 out of 15
+FOLD4 EPOCH:  2, train_loss:0.68995, u_score:2168.17407, auc:0.53280, logloss:0.69273, time: 17.05min
+Validation score improved (0.5320570997103471 --> 0.5327988881503106). Saving model!
+FOLD4 EPOCH:  3, train_loss:0.68885, u_score:1354.23247, auc:0.53015, logloss:0.69340, time: 17.46min
+EarlyStopping counter: 1 out of 15
+FOLD4 EPOCH:  4, train_loss:0.68777, u_score:1465.27671, auc:0.52977, logloss:0.69435, time: 17.87min
+EarlyStopping counter: 2 out of 15
+FOLD4 EPOCH:  5, train_loss:0.68681, u_score:1962.82021, auc:0.52864, logloss:0.69606, time: 18.27min
+EarlyStopping counter: 3 out of 15
+FOLD4 EPOCH:  6, train_loss:0.68580, u_score:1378.16204, auc:0.52930, logloss:0.69667, time: 18.66min
+EarlyStopping counter: 4 out of 15
+FOLD4 EPOCH:  7, train_loss:0.68474, u_score:1810.68399, auc:0.52933, logloss:0.69631, time: 19.07min
+EarlyStopping counter: 5 out of 15
+FOLD4 EPOCH:  8, train_loss:0.68373, u_score:1654.75688, auc:0.52802, logloss:0.69655, time: 19.46min
+EarlyStopping counter: 6 out of 15
+FOLD4 EPOCH:  9, train_loss:0.68261, u_score:1451.55111, auc:0.52611, logloss:0.70168, time: 19.86min
+EarlyStopping counter: 7 out of 15
+
+Total training time: 19.86min
