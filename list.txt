@@ -1,0 +1,13 @@
+Kaggle 经典量化竞赛（强烈推荐）
+Jane Street Market Prediction — 必看经典，学习高频数据处理与时间序列交叉验证
+Optiver Realized Volatility Prediction — 学习订单簿微观结构与波动率预测
+Ubiquant Market Prediction（九坤） — 针对 A 股多因子预测，适合国内方向
+    https://zhuanlan.zhihu.com/p/668784294
+
+MITSUI&CO. Commodity Prediction — 最新赛事，大宗商品价差预测
+Jane Street Real-Time Market Data Forecasting
+G-Research Crypto Forecasting
+
+
+
+Overview: https://zhuanlan.zhihu.com/p/673981597

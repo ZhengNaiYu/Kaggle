@@ -1,6 +1,7 @@
 # Directories
 data/
 models/
+tmp/
 
 # File extensions
 *.npy
