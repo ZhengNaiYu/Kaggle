@@ -1,26 +1,47 @@
+"""
+Jane Street Market Prediction — Neural Network Training
+Models: Bidirectional LSTM  +  FT-Transformer (ensembled)
+
+Artifacts saved to:  ./tmp/neural_network/
+  - lstm_fold{n}.pth          LSTM checkpoints
+  - transformer_fold{n}.pth   Transformer checkpoints
+  - scaler_mean.npy / scaler_scale.npy
+"""
+
 import warnings
 warnings.filterwarnings('ignore')
 
-import os, gc, random, time
+import os, gc, random, time, math, contextlib
 import pandas as pd
 import numpy as np
-from sklearn.metrics import roc_auc_score, roc_curve, log_loss
+from sklearn.metrics import roc_auc_score, log_loss
 from sklearn.model_selection import GroupKFold
 from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
-from tqdm import tqdm
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from torch.nn.modules.loss import _WeightedLoss
+from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
+
+
+# ============================================================
+# Config
+# ============================================================
+TMP_DIR      = './tmp/neural_network'
+os.makedirs(TMP_DIR, exist_ok=True)
+
+BATCH_SIZE   = 2048
+LR           = 1e-3
+NUM_EPOCHS   = 10
+NUM_FOLDS    = 5
+PATIENCE     = 10
+LABEL_SMOOTH = 0.01
 
 
 # ============================================================
 # Seed
 # ============================================================
-def seed_everything(seed=42):
+def seed_everything(seed: int = 42) -> None:
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
     np.random.seed(seed)
@@ -28,359 +49,404 @@ def seed_everything(seed=42):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
 
-seed_everything(seed=42)
+seed_everything(42)
 
 
 # ============================================================
-# Preprocessing (Improved)
+# Preprocessing
 # ============================================================
-print('Loading...')
-train = pd.read_csv('./data/train.csv')
+print('Loading data...')
+train    = pd.read_csv('./data/train.csv')
 features = [c for c in train.columns if 'feature' in c]
 
-print('Filling...')
-print('Original shape:', train.shape)
-print('features[1:] shape:', train[features[1:]].shape)
+print('Filling missing values by date group (feature_1 onward)...')
+for feat in features[1:]:
+    train[feat] = (
+        train.groupby('date')[feat]
+             .transform(lambda x: x.fillna(x.mean()))
+             .fillna(train[feat].mean())
+    )
 
-# P0 IMPROVEMENT: 按日期分组填充，避免信息泄露
-print('Filling missing values by date...')
-for feature in features[1:]:
-    train[feature] = train.groupby('date')[feature].transform(
-        lambda x: x.fillna(x.mean())
-    ).fillna(train[feature].mean())
-
-# 过滤权重 > 0 的样本
 train = train.loc[train.weight > 0].reset_index(drop=True)
+print(f'Shape after weight filter: {train.shape}')
 
-print('Original data shape after weight filter:', train.shape)
-
-# P1 IMPROVEMENT: 特征去重 - 移除高相关性特征
-print('Feature deduplication...')
+# Remove highly correlated features
+print('Removing highly correlated features (threshold=0.95)...')
 corr_matrix = train[features].corr().abs()
-upper_tri = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+upper_tri   = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
 to_drop = []
 for col in corr_matrix.columns:
     col_idx = corr_matrix.columns.get_loc(col)
     if (corr_matrix.iloc[col_idx][upper_tri[col_idx]] > 0.95).any():
         to_drop.append(col)
-
 to_drop = list(set(to_drop))
-features_dedup = [f for f in features if f not in to_drop]
-print(f'Features before dedup: {len(features)}, after: {len(features_dedup)}')
-features = features_dedup
+features = [f for f in features if f not in to_drop]
+print(f'Features: {len(features)} (removed {len(to_drop)} correlated)')
 
-# P1 IMPROVEMENT: 标准化特征
-print('Standardizing features...')
+# Standardize
 scaler = StandardScaler()
 train[features] = scaler.fit_transform(train[features])
-np.save('scaler_mean.npy', scaler.mean_)
-np.save('scaler_scale.npy', scaler.scale_)
+np.save(os.path.join(TMP_DIR, 'scaler_mean.npy'),  scaler.mean_)
+np.save(os.path.join(TMP_DIR, 'scaler_scale.npy'), scaler.scale_)
+print(f'Scalers saved to {TMP_DIR}/')
 
-# 创建标签
 train['action'] = (train['resp'] > 0).astype('int')
-
-print('Converting...')
-print('Features shape:', train[features].shape)
-print('Train shape:', train.shape)
-print('Label distribution:', train['action'].value_counts(normalize=True))
-print('Weight statistics - mean: {:.5f}, std: {:.5f}'.format(train['weight'].mean(), train['weight'].std()))
-
-print('Finish preprocessing.')
+print(f'Label distribution: {train["action"].value_counts(normalize=True).to_dict()}')
+print('Preprocessing done.\n')
 
 
 # ============================================================
-# Model (Improved - Simpler Architecture)
+# Models
 # ============================================================
-class ImprovedModel(nn.Module):
-    def __init__(self, input_dim):
-        super(ImprovedModel, self).__init__()
-        self.batch_norm0 = nn.BatchNorm1d(input_dim)
-        self.dropout0 = nn.Dropout(0.1)
 
-        # 简化架构，避免过拟合
-        self.dense1 = nn.Linear(input_dim, 256)
-        self.batch_norm1 = nn.BatchNorm1d(256)
-        self.dropout1 = nn.Dropout(0.2)
+class LSTMModel(nn.Module):
+    """
+    Bidirectional LSTM for tabular market data.
 
-        self.dense2 = nn.Linear(256, 128)
-        self.batch_norm2 = nn.BatchNorm1d(128)
-        self.dropout2 = nn.Dropout(0.2)
+    The `input_dim` features are linearly projected into `seq_len` time steps
+    of size `step_size` each, allowing the LSTM to capture inter-feature
+    temporal dynamics.  A two-layer BiLSTM processes the sequence and the
+    concatenated final hidden states are decoded by an MLP head.
+    """
+    def __init__(
+        self,
+        input_dim:  int,
+        seq_len:    int   = 10,
+        hidden_dim: int   = 256,
+        num_layers: int   = 2,
+        dropout:    float = 0.2,
+    ) -> None:
+        super().__init__()
+        self.seq_len   = seq_len
+        step_size      = math.ceil(input_dim / seq_len)
+        padded_dim     = step_size * seq_len
+        self.step_size = step_size
 
-        self.dense3 = nn.Linear(128, 64)
-        self.batch_norm3 = nn.BatchNorm1d(64)
-        self.dropout3 = nn.Dropout(0.2)
+        self.input_bn   = nn.BatchNorm1d(input_dim)
+        self.input_proj = nn.Linear(input_dim, padded_dim)
 
-        self.dense4 = nn.Linear(64, 1)
+        self.lstm = nn.LSTM(
+            input_size  = step_size,
+            hidden_size = hidden_dim,
+            num_layers  = num_layers,
+            batch_first = True,
+            bidirectional = True,
+            dropout     = dropout if num_layers > 1 else 0.0,
+        )
 
-    def forward(self, x):
-        x = self.batch_norm0(x)
-        x = self.dropout0(x)
+        self.head = nn.Sequential(
+            nn.LayerNorm(hidden_dim * 2),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 2, 128),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, 1),
+        )
 
-        x = self.dense1(x)
-        x = self.batch_norm1(x)
-        x = F.relu(x)
-        x = self.dropout1(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.input_bn(x)
+        x = self.input_proj(x)                                 # (B, padded)
+        x = x.view(x.size(0), self.seq_len, self.step_size)   # (B, seq, step)
+        _, (h_n, _) = self.lstm(x)                            # h_n: (L*2, B, H)
+        # Concatenate last forward and backward hidden states
+        h = torch.cat([h_n[-2], h_n[-1]], dim=-1)             # (B, 2H)
+        return self.head(h)                                    # (B, 1)
 
-        x = self.dense2(x)
-        x = self.batch_norm2(x)
-        x = F.relu(x)
-        x = self.dropout2(x)
 
-        x = self.dense3(x)
-        x = self.batch_norm3(x)
-        x = F.relu(x)
-        x = self.dropout3(x)
+class TransformerModel(nn.Module):
+    """
+    Feature Tokenizer Transformer (FT-Transformer).
 
-        x = self.dense4(x)
-        return x
+    Each feature scalar is linearly projected to an `embed_dim`-dimensional
+    token.  A learnable [CLS] token is prepended, and the full sequence is
+    processed by a stack of Pre-LN Transformer encoder layers.  The CLS
+    output is passed through a classification head.
+
+    Reference: Gorishniy et al., "Revisiting Deep Learning Models for
+    Tabular Data", NeurIPS 2021.
+    """
+    def __init__(
+        self,
+        input_dim: int,
+        embed_dim: int   = 64,
+        num_heads: int   = 4,
+        num_layers: int  = 3,
+        dropout:   float = 0.1,
+    ) -> None:
+        super().__init__()
+        # Per-feature linear tokenizer: scalar → embed_dim
+        self.tokenizer = nn.Linear(1, embed_dim)
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+
+        enc_layer = nn.TransformerEncoderLayer(
+            d_model         = embed_dim,
+            nhead           = num_heads,
+            dim_feedforward = embed_dim * 4,
+            dropout         = dropout,
+            activation      = 'gelu',
+            batch_first     = True,
+            norm_first      = True,   # Pre-LayerNorm improves stability
+        )
+        self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
+
+        self.head = nn.Sequential(
+            nn.LayerNorm(embed_dim),
+            nn.Dropout(dropout),
+            nn.Linear(embed_dim, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B      = x.size(0)
+        tokens = self.tokenizer(x.unsqueeze(-1))        # (B, D, E)
+        cls    = self.cls_token.expand(B, -1, -1)       # (B, 1, E)
+        tokens = torch.cat([cls, tokens], dim=1)        # (B, D+1, E)
+        out    = self.encoder(tokens)                   # (B, D+1, E)
+        return self.head(out[:, 0])                     # (B, 1)  — CLS token
+
+
+class MLPModel(nn.Module):
+    """
+    Baseline MLP (original simple architecture) kept for comparison.
+    BN → Dropout → 256 → 128 → 64 → 1, with ReLU activations.
+    """
+    def __init__(self, input_dim: int, dropout: float = 0.2) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.BatchNorm1d(input_dim),
+            nn.Dropout(0.1),
+            nn.Linear(input_dim, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(64, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
 
 
 # ============================================================
-# Dataset (Improved - with weight support)
+# Dataset
 # ============================================================
-class ImprovedMarketDataset:
-    def __init__(self, df, features):
-        self.features = df[features].values
-        self.label = df['action'].values.reshape(-1, 1)
-        self.weight = df['weight'].values.reshape(-1, 1)
+class MarketDataset(Dataset):
+    def __init__(self, df: pd.DataFrame, feats: list) -> None:
+        self.X = torch.tensor(df[feats].values,          dtype=torch.float32)
+        self.y = torch.tensor(df['action'].values,       dtype=torch.float32).unsqueeze(1)
+        self.w = torch.tensor(df['weight'].values,       dtype=torch.float32).unsqueeze(1)
 
-    def __len__(self):
-        return len(self.label)
+    def __len__(self) -> int:
+        return len(self.X)
 
-    def __getitem__(self, idx):
-        return {
-            'features': torch.tensor(self.features[idx], dtype=torch.float),
-            'label': torch.tensor(self.label[idx], dtype=torch.float),
-            'weight': torch.tensor(self.weight[idx], dtype=torch.float)
-        }
+    def __getitem__(self, idx: int):
+        return self.X[idx], self.y[idx], self.w[idx]
 
 
 # ============================================================
-# Train / Inference functions (Improved)
+# Training / Inference helpers
 # ============================================================
-def train_fn_weighted(model, optimizer, scheduler, loss_fn, dataloader, device):
-    """P0 IMPROVEMENT: 使用样本权重的加权损失"""
+def run_epoch(
+    model:     nn.Module,
+    loader:    DataLoader,
+    device:    torch.device,
+    optimizer: torch.optim.Optimizer,
+    scheduler,
+    smoothing: float = 0.01,
+) -> float:
+    """One training epoch with weighted, label-smoothed BCE loss."""
     model.train()
-    final_loss = 0
-    total_weight = 0
-
-    for data in dataloader:
+    total, n = 0.0, 0
+    for X, y, w in loader:
+        X, y, w = X.to(device), y.to(device), w.to(device)
+        y_smooth = y * (1.0 - smoothing) + 0.5 * smoothing
+        logits   = model(X)
+        loss     = (
+            F.binary_cross_entropy_with_logits(logits, y_smooth, reduction='none')
+             .squeeze()
+             .mul(w.squeeze())
+             .mean()
+        )
         optimizer.zero_grad()
-        feat = data['features'].to(device)
-        label = data['label'].to(device)
-        weight = data['weight'].to(device)
-        
-        outputs = model(feat)
-        loss = loss_fn(outputs, label)
-        
-        # 加权损失
-        weighted_loss = (loss.squeeze() * weight.squeeze()).mean()
-        
-        weighted_loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
-        
         if scheduler:
             scheduler.step()
-        
-        final_loss += weighted_loss.item() * len(feat)
-        total_weight += len(feat)
-
-    final_loss /= total_weight
-    return final_loss
+        total += loss.item() * len(X)
+        n     += len(X)
+    return total / n
 
 
-def inference_fn(model, dataloader, device):
+def predict(model: nn.Module, loader: DataLoader, device: torch.device) -> np.ndarray:
     model.eval()
     preds = []
-
-    for data in dataloader:
-        feat = data['features'].to(device)
-        with torch.no_grad():
-            outputs = model(feat)
-        preds.append(torch.sigmoid(outputs).detach().cpu().numpy())
-
-    preds = np.concatenate(preds).reshape(-1)
-    return preds
+    with torch.no_grad():
+        for X, _, _ in loader:
+            preds.append(torch.sigmoid(model(X.to(device))).cpu().numpy())
+    return np.concatenate(preds).ravel()
 
 
 # ============================================================
-# Loss
-# ============================================================
-class SmoothBCEwLogits(_WeightedLoss):
-    def __init__(self, weight=None, reduction='mean', smoothing=0.0):
-        super().__init__(weight=weight, reduction=reduction)
-        self.smoothing = smoothing
-        self.weight = weight
-        self.reduction = reduction
-
-    @staticmethod
-    def _smooth(targets: torch.Tensor, n_labels: int, smoothing=0.0):
-        assert 0 <= smoothing < 1
-        with torch.no_grad():
-            targets = targets * (1.0 - smoothing) + 0.5 * smoothing
-        return targets
-
-    def forward(self, inputs, targets):
-        targets = SmoothBCEwLogits._smooth(targets, inputs.size(-1), self.smoothing)
-        loss = F.binary_cross_entropy_with_logits(inputs, targets, self.weight)
-
-        if self.reduction == 'sum':
-            loss = loss.sum()
-        elif self.reduction == 'mean':
-            loss = loss.mean()
-        return loss
-
-
-# ============================================================
-# Early Stopping (Improved)
+# Early Stopping
 # ============================================================
 class EarlyStopping:
-    def __init__(self, patience=7, mode="max", delta=0.):
-        self.patience = patience
-        self.counter = 0
-        self.mode = mode
-        self.best_score = None
+    def __init__(self, patience: int = 7, delta: float = 1e-5) -> None:
+        self.patience   = patience
+        self.delta      = delta
+        self.best_score = -np.inf
+        self.counter    = 0
         self.early_stop = False
-        self.delta = delta
-        if self.mode == "min":
-            self.val_score = np.inf
-        else:
-            self.val_score = -np.inf
 
-    def __call__(self, epoch_score, model, model_path):
-        if self.mode == "min":
-            score = -1.0 * epoch_score
-        else:
-            score = np.copy(epoch_score)
-
-        if self.best_score is None:
+    def step(self, score: float, model: nn.Module, path: str) -> None:
+        if score > self.best_score + self.delta:
             self.best_score = score
-            self.save_checkpoint(epoch_score, model, model_path)
-        elif score < self.best_score + self.delta:
+            torch.save(model.state_dict(), path)
+            print(f'    Checkpoint saved (auc={score:.5f})')
+            self.counter = 0
+        else:
             self.counter += 1
-            if self.counter % 5 == 0:
-                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
             if self.counter >= self.patience:
                 self.early_stop = True
-        else:
-            self.best_score = score
-            self.save_checkpoint(epoch_score, model, model_path)
-            self.counter = 0
-
-    def save_checkpoint(self, epoch_score, model, model_path):
-        if epoch_score not in [-np.inf, np.inf, -np.nan, np.nan]:
-            print(f'Validation score improved ({self.val_score:.5f} --> {epoch_score:.5f}). Saving model!')
-            torch.save(model.state_dict(), model_path)
-        self.val_score = epoch_score
 
 
 # ============================================================
-# Utility Score
+# Utility Score (Jane Street competition metric)
 # ============================================================
-def utility_score_bincount(date, weight, resp, action):
+def utility_score(
+    date:   np.ndarray,
+    weight: np.ndarray,
+    resp:   np.ndarray,
+    action: np.ndarray,
+) -> float:
+    date    = date.astype(int)
     count_i = len(np.unique(date))
     Pi = np.bincount(date, weight * resp * action)
-    t = np.sum(Pi) / np.sqrt(np.sum(Pi ** 2)) * np.sqrt(250 / count_i)
-    u = np.clip(t, 0, 6) * np.sum(Pi)
-    return u
+    t  = np.sum(Pi) / np.sqrt(np.sum(Pi ** 2)) * np.sqrt(250 / count_i)
+    return float(np.clip(t, 0, 6) * np.sum(Pi))
 
 
 # ============================================================
-# Training (Improved)
+# Train one model for one fold
+# ============================================================
+def train_one(
+    model:    nn.Module,
+    name:     str,
+    fold:     int,
+    tr_df:    pd.DataFrame,
+    va_df:    pd.DataFrame,
+    feats:    list,
+    device:   torch.device,
+) -> np.ndarray:
+    path  = os.path.join(TMP_DIR, f'{name}_fold{fold}.pth')
+    tr_ld = DataLoader(MarketDataset(tr_df, feats), BATCH_SIZE, shuffle=True,  num_workers=0)
+    va_ld = DataLoader(MarketDataset(va_df, feats), BATCH_SIZE, shuffle=False, num_workers=0)
+
+    model.to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-5)
+    sch = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(opt, T_0=5, eta_min=1e-6)
+    es  = EarlyStopping(patience=PATIENCE)
+
+    for ep in range(NUM_EPOCHS):
+        loss    = run_epoch(model, tr_ld, device, opt, sch, LABEL_SMOOTH)
+        va_pred = predict(model, va_ld, device)
+        auc     = roc_auc_score(va_df['action'].values, va_pred)
+        ll      = log_loss(va_df['action'].values, va_pred)
+        va_binary = (va_pred >= 0.5).astype(int)
+        u = utility_score(
+            va_df['date'].values, va_df['weight'].values,
+            va_df['resp'].values, va_binary
+        )
+        print(f'  [{name}] ep={ep:2d}  loss={loss:.5f}  auc={auc:.5f}  u={u:8.2f}')
+        es.step(auc, model, path)
+        if es.early_stop:
+            print(f'  [{name}] Early stopping at epoch {ep}')
+            break
+
+    # Load best checkpoint before returning predictions
+    model.load_state_dict(torch.load(path, map_location=device))
+    return predict(model, va_ld, device)
+
+
+# ============================================================
+# Main
 # ============================================================
 if __name__ == '__main__':
-    batch_size = 2048
-    label_smoothing = 1e-2
-    learning_rate = 1e-3
-    num_epochs = 15
-
-    # Device
-    if torch.cuda.is_available():
-        device = torch.device("cuda:0")
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        device = torch.device("cpu")
-    print(f"Using device: {device}\n")
+    device = (
+        torch.device('cuda:0') if torch.cuda.is_available()  else
+        torch.device('mps')    if torch.backends.mps.is_available() else
+        torch.device('cpu')
+    )
+    print(f'Device: {device}\n')
 
     gc.collect()
+    start     = time.time()
+    n         = len(train)
+    oof_mlp   = np.zeros(n)
+    oof_lstm  = np.zeros(n)
+    oof_tfm   = np.zeros(n)
 
-    start_time = time.time()
-    oof = np.zeros(len(train['action']))
-    gkf = GroupKFold(n_splits=5)
+    gkf = GroupKFold(n_splits=NUM_FOLDS)
 
-    fold_results = []
+    for fold, (tr, va) in enumerate(
+        gkf.split(train, train['action'], train['date'])
+    ):
+        print(f'\n{"="*62}')
+        print(f' FOLD {fold}  (train={len(tr):,}, valid={len(va):,})')
+        print(f'{"="*62}')
 
-    for fold, (tr, te) in enumerate(gkf.split(train['action'].values, train['action'].values, train['date'].values)):
-        print(f"{'='*60}")
-        print(f"FOLD {fold}")
-        print(f"{'='*60}")
+        tr_df = train.loc[tr].reset_index(drop=True)
+        va_df = train.loc[va].reset_index(drop=True)
 
-        # P0 IMPROVEMENT: 分离train/valid数据集
-        train_df = train.loc[tr].reset_index(drop=True)
-        valid_df = train.loc[te].reset_index(drop=True)
+        # --- Baseline MLP ---
+        print('[MLP]')
+        mlp = MLPModel(input_dim=len(features), dropout=0.2)
+        oof_mlp[va] = train_one(mlp, 'mlp', fold, tr_df, va_df, features, device)
+        del mlp; gc.collect()
 
-        train_set = ImprovedMarketDataset(train_df, features)
-        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=0)
-        
-        valid_set = ImprovedMarketDataset(valid_df, features)
-        valid_loader = DataLoader(valid_set, batch_size=batch_size, shuffle=False, num_workers=0)
+        # --- BiLSTM ---
+        print('[LSTM]')
+        lstm = LSTMModel(
+            input_dim=len(features), seq_len=10,
+            hidden_dim=256, num_layers=2, dropout=0.2,
+        )
+        oof_lstm[va] = train_one(lstm, 'lstm', fold, tr_df, va_df, features, device)
+        del lstm; gc.collect()
 
-        model = ImprovedModel(len(features))
-        model.to(device)
+        # --- FT-Transformer ---
+        print('[Transformer]')
+        tfm = TransformerModel(
+            input_dim=len(features), embed_dim=64,
+            num_heads=4, num_layers=3, dropout=0.1,
+        )
+        oof_tfm[va] = train_one(tfm, 'transformer', fold, tr_df, va_df, features, device)
+        del tfm; gc.collect()
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=1, eta_min=1e-5)
-        loss_fn = SmoothBCEwLogits(smoothing=label_smoothing)
+    # --- Ensemble (equal-weight across all three models) ---
+    oof_ens = (oof_mlp + oof_lstm + oof_tfm) / 3.0
+    labels  = train['action'].values
 
-        ckp_path = f'JSModel_improved_{fold}.pth'
+    u_mlp = utility_score(
+        train['date'].values, train['weight'].values,
+        train['resp'].values, (oof_mlp >= 0.5).astype(int),
+    )
+    u_ens = utility_score(
+        train['date'].values, train['weight'].values,
+        train['resp'].values, (oof_ens >= 0.5).astype(int),
+    )
 
-        es = EarlyStopping(patience=15, mode="max", delta=1e-4)
-        
-        best_auc = 0
-        for epoch in range(num_epochs):
-            train_loss = train_fn_weighted(model, optimizer, scheduler, loss_fn, train_loader, device)
-            valid_pred = inference_fn(model, valid_loader, device)
-            
-            auc_score = roc_auc_score(valid_df['action'].values, valid_pred)
-            logloss_score = log_loss(valid_df['action'].values, valid_pred)
-            
-            valid_pred_binary = np.where(valid_pred >= 0.5, 1, 0).astype(int)
-            u_score = utility_score_bincount(
-                date=valid_df['date'].values,
-                weight=valid_df['weight'].values,
-                resp=valid_df['resp'].values,
-                action=valid_pred_binary
-            )
-
-            elapsed_time = (time.time() - start_time) / 60
-            print(
-                f"FOLD{fold} EPOCH:{epoch:2d}, train_loss:{train_loss:.5f}, "
-                f"u_score:{u_score:8.2f}, auc:{auc_score:.5f}, "
-                f"logloss:{logloss_score:.5f}, time:{elapsed_time:6.2f}min"
-            )
-
-            es(auc_score, model, model_path=ckp_path)
-            
-            if auc_score > best_auc:
-                best_auc = auc_score
-            
-            if es.early_stop:
-                print(f"Early stopping at epoch {epoch}")
-                break
-
-        print(f"Fold {fold} best AUC: {best_auc:.5f}\n")
-        fold_results.append(best_auc)
-
-        # 释放内存
-        del train_set, valid_set, train_loader, valid_loader, model, optimizer, scheduler
-        gc.collect()
-
-    print(f"{'='*60}")
-    print(f"SUMMARY")
-    print(f"{'='*60}")
-    print(f"Fold AUCs: {[f'{x:.5f}' for x in fold_results]}")
-    print(f"Mean AUC: {np.mean(fold_results):.5f}")
-    print(f"Std AUC: {np.std(fold_results):.5f}")
-    print(f"Total training time: {(time.time() - start_time) / 60:.2f}min")
+    print(f'\n{"="*62}')
+    print(f' SUMMARY')
+    print(f'{"="*62}')
+    print(f'MLP         OOF AUC : {roc_auc_score(labels, oof_mlp):.5f}  Utility={u_mlp:.2f}')
+    print(f'LSTM        OOF AUC : {roc_auc_score(labels, oof_lstm):.5f}')
+    print(f'Transformer OOF AUC : {roc_auc_score(labels, oof_tfm):.5f}')
+    print(f'Ensemble    OOF AUC : {roc_auc_score(labels, oof_ens):.5f}  Utility={u_ens:.2f}')
+    print(f'Total time          : {(time.time() - start) / 60:.2f} min')
