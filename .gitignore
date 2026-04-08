@@ -9,3 +9,4 @@ tmp/
 *.pth
 *.pt
 *.hdf5
+*.parquet
