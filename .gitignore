@@ -2,6 +2,8 @@
 data/
 models/
 tmp/
+checkpoints/
+logs/
 
 # File extensions
 *.npy
@@ -10,3 +12,4 @@ tmp/
 *.pt
 *.hdf5
 *.parquet
+*.pyc
